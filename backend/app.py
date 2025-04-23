@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response, stream_with_context
 from flask_cors import CORS
 import os
 import json
@@ -89,6 +89,7 @@ def chat():
         data = request.json
         messages = data.get('messages', [])
         query = messages[-1].get('content', '') if messages else ''
+        stream_response = data.get('stream', True)  # Default to streaming
         
         # Ensure the Azure-specific system prompt is included
         if messages and messages[0].get('role') != 'system':
@@ -114,19 +115,83 @@ def chat():
             else:
                 messages.insert(0, {"role": "system", "content": AZURE_SYSTEM_PROMPT + docs_context})
         
-        # Call the Groq API
-        response = client.chat.completions.create(
-            model=MODEL,
-            messages=messages,
-            temperature=0.2,  # Lower temperature for more focused responses
-            max_tokens=1500,
-            stream=True
-        )
-        
-        # Include sources of information in the response
+        # Prepare sources
         sources = []
         if azure_docs:
             sources = [{"title": doc["title"], "url": doc["url"]} for doc in azure_docs]
+        
+        if stream_response:
+            return stream_chat_response(messages, sources)
+        else:
+            return non_stream_chat_response(messages, sources)
+            
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+def stream_chat_response(messages, sources):
+    """Stream the response from Groq API"""
+    def generate():
+        try:
+            # Initialize tokens count
+            prompt_tokens = 0
+            completion_tokens = 0
+            
+            # Send SSE headers for initial metadata
+            metadata = {
+                'event': 'metadata',
+                'data': json.dumps({
+                    'sources': sources
+                })
+            }
+            yield f"event: metadata\ndata: {json.dumps({'sources': sources})}\n\n"
+            
+            # Call Groq API with streaming enabled
+            response_stream = client.chat.completions.create(
+                model=MODEL,
+                messages=messages,
+                temperature=0.5,
+                max_tokens=1500,
+                stream=True,
+            )
+            
+            collected_content = ""
+            
+            # Process the streaming response
+            for chunk in response_stream:
+                if hasattr(chunk.choices[0].delta, 'content') and chunk.choices[0].delta.content:
+                    content = chunk.choices[0].delta.content
+                    collected_content += content
+                    
+                    # Update tokens count if available
+                    if hasattr(chunk, 'usage') and chunk.usage:
+                        if hasattr(chunk.usage, 'prompt_tokens'):
+                            prompt_tokens = chunk.usage.prompt_tokens
+                        if hasattr(chunk.usage, 'completion_tokens'):
+                            completion_tokens += 1  # Increment by 1 as a rough estimate
+                    
+                    # Send the content chunk
+                    yield f"event: content\ndata: {json.dumps({'content': content})}\n\n"
+            
+            # Send final message with token usage
+            total_tokens = prompt_tokens + completion_tokens
+            yield f"event: complete\ndata: {json.dumps({'usage': {'prompt_tokens': prompt_tokens, 'completion_tokens': completion_tokens, 'total_tokens': total_tokens}})}\n\n"
+            
+        except Exception as e:
+            error_message = str(e)
+            yield f"event: error\ndata: {json.dumps({'error': error_message})}\n\n"
+    
+    return Response(stream_with_context(generate()), content_type='text/event-stream')
+
+def non_stream_chat_response(messages, sources):
+    """Return a non-streaming response from Groq API"""
+    try:
+        # Call the Groq API without streaming
+        response = client.chat.completions.create(
+            model=MODEL,
+            messages=messages,
+            temperature=0.3,
+            max_tokens=1500,
+        )
         
         return jsonify({
             'response': response.choices[0].message.content,
@@ -137,7 +202,6 @@ def chat():
                 'total_tokens': response.usage.total_tokens
             }
         })
-        
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
