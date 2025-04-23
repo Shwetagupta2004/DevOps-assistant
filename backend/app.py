@@ -118,8 +118,9 @@ def chat():
         response = client.chat.completions.create(
             model=MODEL,
             messages=messages,
-            temperature=0.5,  # Lower temperature for more focused responses
-            max_tokens=1500
+            temperature=0.2,  # Lower temperature for more focused responses
+            max_tokens=1500,
+            stream=True
         )
         
         # Include sources of information in the response
