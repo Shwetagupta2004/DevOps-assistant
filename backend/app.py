@@ -144,5 +144,5 @@ def chat():
 def health_check():
     return jsonify({'status': 'healthy', 'focus': 'Azure DevOps'})
 
-if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+if __name__ == '__main__': # Use PORT env variable from Render
+    app.run(debug=False, host="0.0.0.0", port=5000)
