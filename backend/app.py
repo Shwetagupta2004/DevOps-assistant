@@ -140,9 +140,5 @@ def chat():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/health', methods=['GET'])
-def health_check():
-    return jsonify({'status': 'healthy', 'focus': 'Azure DevOps'})
-
 if __name__ == '__main__': # Use PORT env variable from Render
     app.run(debug=False, host="0.0.0.0", port=5000)
